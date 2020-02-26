@@ -1,8 +1,8 @@
-from machine import Pin
-from machine import Timer
+import time, network, urequests, ntptime
 
-import time
+from machine import Pin, RTC
 from neopixel import NeoPixel
+
 
 gamma8 = [  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
             0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  1,  1,  1,  1,
@@ -38,7 +38,7 @@ class Hand:
     def intensity(self):
         return (self.max_intensity//(self.max_ticks//self.total_indexes))*(self.count%(self.max_ticks//self.total_indexes))
 
-    def current(self):
+    def current(self,count = -1):
         return self.count//(self.max_ticks//self.total_indexes)
 
     def prior(self):
@@ -47,20 +47,26 @@ class Hand:
     def next(self):
         return (self.current()+1)%self.total_indexes
 
-cnt = 12
-np = NeoPixel(Pin(14), cnt)
-
-z = []
-for x in range(cnt):
-    z.append(0)
-
-s = Hand(cnt, 60, 150)
-m = Hand(cnt, 60, 150)
-h = Hand(cnt, 12, 150)
+def syncTime():
+    print("De-init timer...")
+    timer.deinit()
+    print("Start syncing time...")
+    while not wifi.isconnected():
+        time.sleep(1)
+    print("Setting time...")
+    ntptime.settime()
+    print("Reading RTC...")
+    (year, month, day, weekday, hours, minutes, seconds, subseconds)=RTC().datetime()
+    print("Adjusting time...")
+    RTC().datetime((year, month, day, weekday, hours+utc_offset_hours, minutes+utc_offset_mins, seconds, subseconds))
+    s.count = seconds%s.max_ticks
+    m.count = (minutes+utc_offset_mins)%m.max_ticks
+    h.count = (hours+utc_offset_hours)%h.max_ticks
+    print("Re-init timer...")
+    timer.init(freq=1, callback=intHandler)
 
 def intHandler(timer):
     state = machine.disable_irq()
-    #print(s.count, s.intensity(), s.max_intensity-s.intensity())
     r = z.copy()
     g = z.copy()
     b = z.copy()
@@ -76,10 +82,40 @@ def intHandler(timer):
     if s.tick():
         if m.tick():
             h.tick()
+            syncTime()
     machine.enable_irq(state)
 
+# wifi connection
+ssid = "TinyBear"           # wifi name
+pwd = "11596abc11746xyz"    # wifi password
+wifi = network.WLAN(network.STA_IF) # station mode
+wifi.active(True)
+wifi.connect(ssid, pwd)
+
+print("Connecting to",ssid)
+while not wifi.isconnected():
+    time.sleep(1)
+
+ip = urequests.get(url='https://ip4.seeip.org/').text
+utc_offset = urequests.get(url='https://ipapi.co/{}/utc_offset/'.format(ip)).text
+utc_offset_hours = int(utc_offset)//100
+utc_offset_mins = int(utc_offset)%100
+
+cnt = 12
+np = NeoPixel(Pin(14), cnt)
+
+z = []
+for x in range(cnt):
+    z.append(0)
+
+s = Hand(cnt, 60, 150)
+m = Hand(cnt, 60, 150)
+h = Hand(cnt, 12, 150)
+
 timer = machine.Timer(0)
-timer.init(freq=1, callback=intHandler)
+timer.init(freq=200, callback=intHandler)
+
+syncTime()
 
 while True:
     pass
